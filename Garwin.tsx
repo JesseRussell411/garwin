@@ -3,6 +3,7 @@ import { Unpick } from "../types/object";
 import useConst from "./useConst";
 import useForceRedraw from "./useForceRedraw";
 import Resizable from "./Resizable";
+import React from "react";
 
 export interface WindowConfig {
     /** Unique identifier for the window. Can be a string, number, bigint, symbol, object instance, pretty much anything as long as it's unique and doesn't change. */
@@ -40,35 +41,30 @@ export default function Garwin({
     // And there isn't a single thing you can do about it.
     const windows = useConst(() => new Map<Key, Window>());
 
+    // update old window contents and add new windows
     for (const windowConfig of windowConfigs) {
         const window = windows.get(windowConfig.key);
-        let nextZindex: number | undefined = undefined;
+        let nextZIndex: number | undefined = undefined;
 
         if (window !== undefined) {
             window.contents = windowConfig.contents;
         } else {
-            if (nextZindex === undefined) {
-                // find the largest current z index. could do this in one line if [].reduce didn't throw an error when you give it an empty array
-                for (const w of windows.values()) {
-                    if (nextZindex === undefined) {
-                        nextZindex = w.zIndex;
-                    } else if (w.zIndex > nextZindex) {
-                        nextZindex = w.zIndex;
-                    }
-                }
-                if (nextZindex === undefined) {
-                    nextZindex = 0;
-                } else {
-                    nextZindex++;
-                }
+            if (nextZIndex === undefined) {
+                nextZIndex =
+                    windows.size === 0
+                        ? 0
+                        : [...windows.values()]
+                              .map((w) => w.zIndex)
+                              .reduce((max, zIndex) => Math.max(max, zIndex)) +
+                          1;
             } else {
-                nextZindex++;
+                nextZIndex++;
             }
             windows.set(windowConfig.key, {
                 contents: windowConfig.contents,
                 Key: windowConfig.key,
                 location: getInitialLocation(windowConfig),
-                zIndex: nextZindex,
+                zIndex: nextZIndex,
             });
         }
     }
@@ -108,7 +104,7 @@ export default function Garwin({
     }
     const fancyBlur = {
         backdropFilter: "blur(1px)",
-        backgroundColor: "rgba(0,0,0,0.2)",
+        backgroundColor: "rgba(0,0,0,0.7)",
         borderRadius: "5px",
     };
 
