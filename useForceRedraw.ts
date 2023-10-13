@@ -4,9 +4,9 @@ import { useState } from "react";
  * Tells react to go away and let you do the redrawing on your own.
  */
 export default function useForceRedraw() {
-    const [_, setInstanceValue] = useState({});
+    const [_, setInstanceValue] = useState(Symbol());
 
     return () => {
-        setInstanceValue({});
+        setInstanceValue(Symbol());
     };
 }
