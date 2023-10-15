@@ -1,4 +1,4 @@
-import {
+import React, {
     ComponentProps,
     ReactNode,
     useEffect,
@@ -34,11 +34,13 @@ export interface ResizableProps extends Unpick<ComponentProps<"div">, "ref"> {
         edge: "top" | "bottom",
         startingClientRect: DOMRect
     ) => number | "cancel" | undefined | void;
+    minHeight?: number;
+    minWidth?: number;
     showLeftHandle?: boolean;
     showRightHandle?: boolean;
     showBottomHandle?: boolean;
     showTopHandle?: boolean;
-    ref?: MutableRefObject<HTMLDivElement | null>;
+    divRef?: MutableRefObject<HTMLDivElement | null>;
     children?: ReactNode;
 }
 
@@ -55,8 +57,10 @@ export default function Resizable({
     showBottomHandle = true,
     showTopHandle = false,
     handleProps,
+    minHeight: externalMinHeight,
+    minWidth: externalMinWidth,
     children,
-    ref: externalRef,
+    divRef: externalRef,
     ...divProps
 }: ResizableProps) {
     const initialWidth = width;
@@ -67,11 +71,15 @@ export default function Resizable({
     if (externalSetWidth === undefined) width = widthState;
     if (externalSetHeight === undefined) height = heightState;
 
-    const minWidth =
-        (showLeftHandle ? handleSize : 0) + (showRightHandle ? handleSize : 0);
+    const minWidth = Math.max(
+        externalMinWidth ?? 0,
+        (showLeftHandle ? handleSize : 0) + (showRightHandle ? handleSize : 0)
+    );
 
-    const minHeight =
-        (showTopHandle ? handleSize : 0) + (showBottomHandle ? handleSize : 0);
+    const minHeight = Math.max(
+        externalMinHeight ?? 0,
+        (showTopHandle ? handleSize : 0) + (showBottomHandle ? handleSize : 0)
+    );
 
     function setWidth(
         value: number,
@@ -111,6 +119,8 @@ export default function Resizable({
 
     const backupRef = useInitRef<HTMLDivElement | null>(null);
     const ref = externalRef ?? backupRef;
+
+    console.log({ ref, externalRef, backupRef });
 
     function getLeftResize(
         container: HTMLElement,

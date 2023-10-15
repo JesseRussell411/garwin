@@ -1,20 +1,22 @@
 import { useEffect, useRef } from "react";
+import { defined, notNull } from "../iterableUtils";
 
 /**
  * Adds an event listener to the given target and automatically removes it.
+ * @param target The target or a list of multiple targets.
  * @returns The target's {@link EventTarget.addEventListener} function.
  */
 export default function useEventListener<
     Target extends EventTarget | null | undefined
 >(
-    target: Target,
+    target: Target | Target[],
     { enabled = true }: { enabled?: boolean } = {}
 ): (Target & {})["addEventListener"] {
-    /** The currently added event listener, its type, and the target its added to. */
+    /** The currently added event listener, its type, and the targets its added to. */
     const addedListener = useRef<{
         listener: EventListenerOrEventListenerObject;
         type: string;
-        target: EventTarget;
+        targets: EventTarget[];
     }>();
 
     /** The current arguments. */
@@ -24,8 +26,11 @@ export default function useEventListener<
     /** Removes the currently added listener from its target. */
     const removeListener = useRef(() => {
         if (addedListener.current === undefined) return;
-        const { listener, type, target } = addedListener.current;
-        target.removeEventListener(type, listener);
+        const { listener, type, targets } = addedListener.current;
+
+        for (const target of targets) {
+            target.removeEventListener(type, listener);
+        }
         addedListener.current = undefined;
     }).current;
 
@@ -40,12 +45,20 @@ export default function useEventListener<
             // remove currently added event listener
             removeListener();
 
-            // then added it back on as long as enabled is raised and the target is defined
-            if (enabled && target != null) {
-                // TODO work with once somehow
-                target.addEventListener(type, listener, ...rest);
+            // then add it back on as long as enabled is raised and the target is defined
+            if (enabled) {
+                const targets = [
+                    ...notNull(
+                        defined(Array.isArray(target) ? target : [target])
+                    ),
+                ];
 
-                addedListener.current = { listener, type, target };
+                targets.forEach((target) => {
+                    target?.addEventListener(type, listener, ...rest);
+                });
+                // TODO add support for options somehow
+
+                addedListener.current = { listener, type, targets };
             }
         }
     ).current;
