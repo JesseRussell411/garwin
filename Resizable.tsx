@@ -4,308 +4,311 @@ import React, {
     useEffect,
     useState,
     MutableRefObject,
+    CSSProperties,
+    forwardRef,
+    useImperativeHandle,
 } from "react";
 import useEventListener from "./hooks/useEventListener";
 import useInitRef from "./hooks/useInitRef";
 import { Unpick } from "../types/object";
 
+function pxIfNum(numOrStr: number | string): string {
+    if (typeof numOrStr === "number") {
+        return `${numOrStr}px`;
+    } else {
+        return numOrStr;
+    }
+}
+
+function v2dSub(
+    a: readonly [x: number, y: number],
+    b: readonly [x: number, y: number]
+): [x: number, y: number] {
+    return [a[0] - b[0], a[1] - b[1]];
+}
+
+function v2dAdd(
+    a: readonly [x: number, y: number],
+    b: readonly [x: number, y: number]
+): [x: number, y: number] {
+    return [a[0] + b[0], a[1] + b[1]];
+}
+
 export interface ResizableProps extends Unpick<ComponentProps<"div">, "ref"> {
-    handleSize?: number;
-    handleProps?: Pick<ComponentProps<"div">, "style" | "className">;
+    resizeHandleSize?: number | string;
+    resizeHandleStyle?: CSSProperties;
+    resizeHandleClassName?: string;
+
     width?: number | string;
     height?: number | string;
-    setWidth?: (
-        width: number,
-        edge: "left" | "right",
-        startingClientRect: DOMRect
+    setWidth?: (width: number) => void;
+    setHeight?: (height: number) => void;
+    // minWidth?: number;
+    // maxWidth?: number;
+    // minHeight?: number;
+    // maxHeight?: number;
+
+    onSizeChange?: (
+        newSize: [x: number, y: number],
+        startingSize: [x: number, y: number],
+        edge: [x?: "left" | "right", y?: "top" | "bottom"]
+    ) => readonly [x: number, y: number] | "cancel" | undefined | void;
+
+    onResizeStart?: (
+        startingSize: [x: number, y: number],
+        edge: [x?: "left" | "right", y?: "top" | "bottom"]
     ) => void;
-    setHeight?: (
-        height: number,
-        edge: "top" | "bottom",
-        startingClientRect: DOMRect
-    ) => void;
-    onWidthChange?: (
-        width: number,
-        edge: "left" | "right",
-        startingClientRect: DOMRect
-    ) => number | "cancel" | undefined | void;
-    onHeightChange?: (
-        height: number,
-        edge: "top" | "bottom",
-        startingClientRect: DOMRect
-    ) => number | "cancel" | undefined | void;
-    minHeight?: number;
-    minWidth?: number;
+
+    onResizeStop?: () => void;
+
     showLeftHandle?: boolean;
     showRightHandle?: boolean;
     showBottomHandle?: boolean;
     showTopHandle?: boolean;
-    divRef?: MutableRefObject<HTMLDivElement | null>;
+
     children?: ReactNode;
 }
 
-export default function Resizable({
-    handleSize = 10,
-    width,
-    height,
-    setWidth: externalSetWidth,
-    setHeight: externalSetHeight,
-    onWidthChange,
-    onHeightChange,
-    showLeftHandle = false,
-    showRightHandle = true,
-    showBottomHandle = true,
-    showTopHandle = false,
-    handleProps,
-    minHeight: externalMinHeight,
-    minWidth: externalMinWidth,
-    children,
-    divRef: externalRef,
-    ...divProps
-}: ResizableProps) {
-    const initialWidth = width;
-    const initialHeight = height;
-    const [widthState, setWidthState] = useState(initialWidth);
-    const [heightState, setHeightState] = useState(initialHeight);
+const Resizable = forwardRef<HTMLDivElement, ResizableProps>(
+    (
+        {
+            resizeHandleClassName,
+            resizeHandleStyle,
+            resizeHandleSize = 10,
+            width,
+            height,
+            setWidth: externalSetWidth,
+            setHeight: externalSetHeight,
+            showLeftHandle = false,
+            showRightHandle = true,
+            showBottomHandle = true,
+            showTopHandle = false,
+            // minHeight = 0,
+            // minWidth = 0,
+            // maxHeight,
+            // maxWidth,
+            children,
+            onSizeChange,
+            onResizeStart,
+            onResizeStop,
+            ...divProps
+        },
+        ref
+    ) => {
+        const initialWidth = width;
+        const initialHeight = height;
+        const [widthState, setWidthState] = useState(initialWidth);
+        const [heightState, setHeightState] = useState(initialHeight);
+        const divRef = useInitRef<HTMLDivElement | null>(null, ref);
 
-    if (externalSetWidth === undefined) width = widthState;
-    if (externalSetHeight === undefined) height = heightState;
+        if (externalSetWidth === undefined) width = widthState;
+        if (externalSetHeight === undefined) height = heightState;
+        const setWidth = externalSetWidth ?? setWidthState;
+        const setHeight = externalSetHeight ?? setHeightState;
 
-    const minWidth = Math.max(
-        externalMinWidth ?? 0,
-        (showLeftHandle ? handleSize : 0) + (showRightHandle ? handleSize : 0)
-    );
+        function setSize(
+            newSize: [x: number, y: number],
+            startingSize: [x: number, y: number],
+            edge: [x?: "left" | "right", y?: "top" | "bottom"]
+        ) {
+            const result = onSizeChange?.(
+                [Math.max(0, newSize[0]), Math.max(0, newSize[1])],
+                startingSize,
+                edge
+            );
+            if (result === "cancel") return;
 
-    const minHeight = Math.max(
-        externalMinHeight ?? 0,
-        (showTopHandle ? handleSize : 0) + (showBottomHandle ? handleSize : 0)
-    );
-
-    function setWidth(
-        value: number,
-        edge: "left" | "right",
-        startingClientRect: DOMRect
-    ) {
-        if (value < minWidth) {
-            value = minWidth;
-        }
-        const userInput = onWidthChange?.(value, edge, startingClientRect);
-        if (userInput === "cancel") return;
-        if (typeof userInput === "number") {
-            value = userInput;
-        }
-
-        setWidthState(value);
-        externalSetWidth?.(value, edge, startingClientRect);
-    }
-
-    function setHeight(
-        value: number,
-        edge: "top" | "bottom",
-        startingClientRect: DOMRect
-    ) {
-        if (value < minHeight) {
-            value = minHeight;
-        }
-        const userInput = onHeightChange?.(value, edge, startingClientRect);
-        if (userInput === "cancel") return;
-        if (typeof userInput === "number") {
-            value = userInput;
+            if (Array.isArray(result)) {
+                newSize = result as [x: number, y: number];
+            }
+            if (edge[0] !== undefined) setWidth(newSize[0]);
+            if (edge[1] !== undefined) setHeight(newSize[1]);
         }
 
-        setHeightState(value);
-        externalSetHeight?.(value, edge, startingClientRect);
+        function getStartResize(
+            edge: [x?: "left" | "right", y?: "top" | "bottom"]
+        ) {
+            return function startResize(
+                mouseStart: readonly [x: number, y: number]
+            ) {
+                const startingSize: [x: number, y: number] | undefined =
+                    divRef.current != null
+                        ? [
+                              typeof width === "number"
+                                  ? width
+                                  : divRef.current.getBoundingClientRect()
+                                        .width,
+                              typeof height === "number"
+                                  ? height
+                                  : divRef.current.getBoundingClientRect()
+                                        .height,
+                          ]
+                        : typeof width === "number" &&
+                          typeof height === "number"
+                        ? [width, height]
+                        : undefined;
+                if (startingSize === undefined) {
+                    return () => {};
+                }
+                onResizeStart?.(startingSize, edge);
+                return (e: MouseEvent) => {
+                    const mouseDistance = v2dSub(
+                        [e.clientX, e.clientY],
+                        mouseStart
+                    );
+                    setSize(
+                        [
+                            edge[0] === "left"
+                                ? startingSize[0] - mouseDistance[0]
+                                : edge[0] === "right"
+                                ? startingSize[0] + mouseDistance[0]
+                                : startingSize[0],
+                            edge[1] === "top"
+                                ? startingSize[1] - mouseDistance[1]
+                                : edge[1] === "bottom"
+                                ? startingSize[1] + mouseDistance[1]
+                                : startingSize[1],
+                        ],
+                        startingSize,
+                        edge
+                    );
+                };
+            };
+        }
+
+        return (
+            <div
+                {...divProps}
+                ref={divRef}
+                style={{
+                    width,
+                    height,
+                    position: "relative",
+                    paddingLeft: showLeftHandle ? resizeHandleSize : 0,
+                    paddingRight: showRightHandle ? resizeHandleSize : 0,
+                    paddingBottom: showBottomHandle ? resizeHandleSize : 0,
+                    paddingTop: showTopHandle ? resizeHandleSize : 0,
+                    boxSizing: "border-box",
+                    ...divProps?.style,
+                }}
+            >
+                {children}
+                {showLeftHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize(["left"])}
+                        handleClassName={resizeHandleClassName}
+                        handleSize={resizeHandleSize}
+                        handleStyle={resizeHandleStyle}
+                        xAxis="left"
+                    />
+                )}
+                {showRightHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize(["right"])}
+                        handleClassName={resizeHandleClassName}
+                        handleSize={resizeHandleSize}
+                        handleStyle={resizeHandleStyle}
+                        xAxis="right"
+                    />
+                )}
+                {showBottomHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize([undefined, "bottom"])}
+                        handleClassName={resizeHandleClassName}
+                        handleSize={resizeHandleSize}
+                        handleStyle={resizeHandleStyle}
+                        yAxis="bottom"
+                    />
+                )}
+                {showTopHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize([undefined, "top"])}
+                        handleClassName={resizeHandleClassName}
+                        handleSize={resizeHandleSize}
+                        handleStyle={resizeHandleStyle}
+                        yAxis="top"
+                    />
+                )}
+
+                {showBottomHandle && showLeftHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize(["left", "bottom"])}
+                        handleSize={resizeHandleSize}
+                        handleClassName={resizeHandleClassName}
+                        handleStyle={resizeHandleStyle}
+                        xAxis="left"
+                        yAxis="bottom"
+                    />
+                )}
+                {showBottomHandle && showRightHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize(["right", "bottom"])}
+                        handleSize={resizeHandleSize}
+                        handleClassName={resizeHandleClassName}
+                        handleStyle={resizeHandleStyle}
+                        xAxis="right"
+                        yAxis="bottom"
+                    />
+                )}
+                {showTopHandle && showLeftHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize(["left", "top"])}
+                        handleSize={resizeHandleSize}
+                        handleClassName={resizeHandleClassName}
+                        handleStyle={resizeHandleStyle}
+                        xAxis="left"
+                        yAxis="top"
+                    />
+                )}
+                {showTopHandle && showRightHandle && (
+                    <Handle
+                        onResizeStop={onResizeStop}
+                        getResize={getStartResize(["right", "top"])}
+                        handleSize={resizeHandleSize}
+                        handleClassName={resizeHandleClassName}
+                        handleStyle={resizeHandleStyle}
+                        xAxis="right"
+                        yAxis="top"
+                    />
+                )}
+            </div>
+        );
     }
+);
 
-    const backupRef = useInitRef<HTMLDivElement | null>(null);
-    const ref = externalRef ?? backupRef;
-
-    console.log({ ref, externalRef, backupRef });
-
-    function getLeftResize(
-        container: HTMLElement,
-        dragPointOffset: [x: number, y: number]
-    ) {
-        const startingClientRect = container.getBoundingClientRect();
-        return (e: MouseEvent) => {
-            setWidth(
-                startingClientRect.right - e.clientX - dragPointOffset[0],
-                "left",
-                startingClientRect
-            );
-        };
-    }
-    function getRightResize(
-        container: HTMLElement,
-        dragPointOffset: [x: number, y: number]
-    ) {
-        const startingClientRect = container.getBoundingClientRect();
-        return (e: MouseEvent) => {
-            setWidth(
-                e.clientX - startingClientRect.left + dragPointOffset[0],
-                "right",
-                startingClientRect
-            );
-        };
-    }
-    function getBottomResize(
-        container: HTMLElement,
-        dragPointOffset: [x: number, y: number]
-    ) {
-        const startingClientRect = container.getBoundingClientRect();
-        return (e: MouseEvent) => {
-            setHeight(
-                e.clientY - startingClientRect.top + dragPointOffset[1],
-                "bottom",
-                startingClientRect
-            );
-        };
-    }
-    function getTopResize(
-        container: HTMLElement,
-        dragPointOffset: [x: number, y: number]
-    ) {
-        const startingClientRect = container.getBoundingClientRect();
-        return (e: MouseEvent) => {
-            setHeight(
-                startingClientRect.bottom - e.clientY - dragPointOffset[1],
-                "top",
-                startingClientRect
-            );
-        };
-    }
-
-    return (
-        <div
-            {...divProps}
-            ref={ref}
-            style={{
-                width,
-                height,
-                position: "relative",
-                paddingLeft: showLeftHandle ? handleSize : 0,
-                paddingRight: showRightHandle ? handleSize : 0,
-                paddingBottom: showBottomHandle ? handleSize : 0,
-                paddingTop: showTopHandle ? handleSize : 0,
-                boxSizing: "border-box",
-                ...divProps.style,
-            }}
-        >
-            {children}
-            {showLeftHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    xAxis="left"
-                    resizeListeners={[getLeftResize]}
-                />
-            )}
-            {showRightHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    xAxis="right"
-                    resizeListeners={[getRightResize]}
-                />
-            )}
-            {showBottomHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    yAxis="bottom"
-                    resizeListeners={[getBottomResize]}
-                />
-            )}
-            {showTopHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    yAxis="top"
-                    resizeListeners={[getTopResize]}
-                />
-            )}
-
-            {showBottomHandle && showLeftHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    xAxis="left"
-                    yAxis="bottom"
-                    resizeListeners={[getBottomResize, getLeftResize]}
-                />
-            )}
-            {showBottomHandle && showRightHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    xAxis="right"
-                    yAxis="bottom"
-                    resizeListeners={[getBottomResize, getRightResize]}
-                />
-            )}
-            {showTopHandle && showLeftHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    xAxis="left"
-                    yAxis="top"
-                    resizeListeners={[getTopResize, getLeftResize]}
-                />
-            )}
-            {showTopHandle && showRightHandle && (
-                <Handle
-                    {...handleProps}
-                    size={handleSize}
-                    div={ref.current}
-                    xAxis="right"
-                    yAxis="top"
-                    resizeListeners={[getTopResize, getRightResize]}
-                />
-            )}
-        </div>
-    );
-}
-
-interface HandleProps
-    extends Pick<ComponentProps<"div">, "style" | "className"> {
+interface HandleProps {
     xAxis?: "left" | "right";
     yAxis?: "top" | "bottom";
-    size: number | string;
-    div: HTMLDivElement | null;
-    resizeListeners: ((
-        container: HTMLElement,
-        dragPointOffset: [x: number, y: number]
-    ) => (e: MouseEvent) => void)[];
+    handleSize: number | string;
+    getResize: (
+        mouseStart: readonly [x: number, y: number]
+    ) => (e: MouseEvent) => void;
+    handleStyle: CSSProperties | undefined;
+    handleClassName: string | undefined;
+    onResizeStop?: (() => void) | undefined;
 }
 
 function Handle({
     xAxis,
     yAxis,
-    size,
-    resizeListeners,
-    ...divProps
+    handleSize,
+    getResize,
+    handleStyle,
+    handleClassName,
+    onResizeStop,
 }: HandleProps) {
-    const [dragging, setDragging] = useState(false);
-
-    // disable selection while dragging
-    useEventListener(document, { enabled: dragging })(
-        "selectstart",
-        (e) => e.preventDefault
-    );
-
-    const negativeSize = `-${size}`;
-
     return (
         <div
-            {...divProps}
+            className={handleClassName}
             style={{
+                boxSizing:"border-box",
                 position: "absolute",
                 ...(xAxis === "left"
                     ? { left: 0 }
@@ -317,8 +320,8 @@ function Handle({
                     : yAxis === "bottom"
                     ? { bottom: 0 }
                     : { top: 0 }),
-                width: xAxis !== undefined ? size : "100%",
-                height: yAxis !== undefined ? size : "100%",
+                width: xAxis !== undefined ? handleSize : "100%",
+                height: yAxis !== undefined ? handleSize : "100%",
                 cursor:
                     xAxis === undefined && yAxis !== undefined
                         ? "ns-resize"
@@ -331,44 +334,29 @@ function Handle({
                         : yAxis === "top"
                         ? "nesw-resize"
                         : "nwse-resize",
-                ...divProps.style,
+                ...handleStyle,
             }}
             onMouseDown={(e) => {
-                e.preventDefault();
-                const container = e.currentTarget.parentElement;
-                if (container == null) return;
-                setDragging(true);
-                resizeListeners.forEach((getResizeListener) => {
-                    const dragPointOffset: [x: number, y: number] = [
-                        (xAxis === "right"
-                            ? e.currentTarget.getBoundingClientRect().right
-                            : e.currentTarget.getBoundingClientRect().left) -
-                            e.clientX,
-                        (yAxis === "bottom"
-                            ? e.currentTarget.getBoundingClientRect().bottom
-                            : e.currentTarget.getBoundingClientRect().top) -
-                            e.clientY,
-                    ];
-                    const resizeListener = getResizeListener(
-                        container,
-                        dragPointOffset
-                    );
+                const resizeListener = getResize([e.clientX, e.clientY]);
+                const prevDef = (e: Event) => e.preventDefault();
 
-                    document.addEventListener("mousemove", resizeListener);
-
-                    document.addEventListener(
-                        "mouseup",
-                        () => {
-                            setDragging(false);
-                            document.removeEventListener(
-                                "mousemove",
-                                resizeListener
-                            );
-                        },
-                        { once: true }
-                    );
-                });
+                document.addEventListener(
+                    "mouseup",
+                    () => {
+                        document.removeEventListener(
+                            "mousemove",
+                            resizeListener
+                        );
+                        document.removeEventListener("selectstart", prevDef);
+                        onResizeStop?.();
+                    },
+                    { once: true }
+                );
+                document.addEventListener("mousemove", resizeListener);
+                document.addEventListener("selectstart", prevDef);
             }}
         />
     );
 }
+
+export default Resizable;

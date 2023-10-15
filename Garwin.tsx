@@ -4,6 +4,7 @@ import React, {
     forwardRef,
     useImperativeHandle,
     CSSProperties,
+    useRef,
 } from "react";
 import { Unpick } from "../types/object";
 import Resizable, { ResizableProps } from "./Resizable";
@@ -12,7 +13,8 @@ import useEventListener from "./hooks/useEventListener";
 import useForceRedraw from "./hooks/useForceRedraw";
 import useInitRef from "./hooks/useInitRef";
 import { defined, notNull } from "./iterableUtils";
-import Itmod from "./itmod/Itmod";
+import Itmod from "iterator-modifier";
+
 
 const defaults = {
     headerSize: 40,
@@ -94,7 +96,7 @@ export interface GarwinProps {
 type Key = any;
 type Window = {
     readonly key: Key;
-    config: WindowProperties;
+    properties: WindowProperties;
     readonly location: [x: number, y: number];
     zIndex: number;
 };
@@ -153,18 +155,19 @@ const Garwin = forwardRef<GarwinRef, GarwinProps>(
             let nextZIndex: number | undefined = undefined;
 
             if (window !== undefined) {
-                window.config = windowProps;
+                window.properties = windowProps;
             } else {
                 if (nextZIndex === undefined) {
+                    // set nextZIndex to maximum existing zIndex plus 1, or 0 if there are no current zIndexes (because there are no windows)
                     nextZIndex =
                         Itmod.from(windows.values())
                             .map((w) => w.zIndex)
-                            .reduce(Math.max, (result) => result + 1) ?? 0;
+                            .reduce(Math.max, (max) => max + 1) ?? 0;
                 } else {
                     nextZIndex++;
                 }
                 windows.set(windowProps.key, {
-                    config: windowProps,
+                    properties: windowProps,
                     key: windowProps.key,
                     location: getInitialLocation(windowProps),
                     zIndex: nextZIndex,
@@ -254,9 +257,11 @@ function Window({
     const headerRef = useInitRef<HTMLDivElement | null>(null);
     const windowRef = useInitRef<HTMLDivElement | null>(null);
     const contentRef = useInitRef<HTMLDivElement | null>(null);
+
+    const resizingStartLocation = useRef<readonly [x: number, y: number]>();
     console.log({ wc: windowRef.current });
 
-    const localWindowConfig = window.config.config;
+    const localWindowConfig = window.properties.config;
     const combinedWindowConfig = {
         ...globalWindowConfig,
         ...localWindowConfig,
@@ -270,13 +275,12 @@ function Window({
     const {
         resizeHandleSize = defaults.resizeHandleSize,
         headerSize = defaults.headerSize,
-        showHeader = draggers.length === 0,
         contentDraggable = true,
+        showHeader = draggers.length === 0,
     } = combinedWindowConfig;
 
     const dragTargets: EventTarget[] = Itmod.of(
         contentDraggable ? contentRef.current : undefined,
-        windowRef.current,
         headerRef.current
     )
         .concat(draggers)
@@ -297,7 +301,6 @@ function Window({
         .toArray();
 
     useEventListener(dragTargets)("mousedown", (e) => {
-        console.log(e);
         if (!(e instanceof MouseEvent)) return;
         if (e.target !== e.currentTarget) return;
 
@@ -351,40 +354,43 @@ function Window({
                 ...globalWindowConfig?.style,
                 ...localWindowConfig?.style,
             }}
-            handleSize={resizeHandleSize}
-            divRef={windowRef}
+            resizeHandleSize={resizeHandleSize}
+            ref={windowRef}
             key={window.key}
-            minHeight={
-                resizeHandleSize +
-                resizeHandleSize +
-                (showHeader ? headerSize : 0)
-            }
-            onMouseDown={(...args) => {
+            // minHeight={
+            //     resizeHandleSize +
+            //     resizeHandleSize +
+            //     (showHeader ? headerSize : 0)
+            // }
+            onMouseDown={() => {
                 moveWindowToFront(window.key);
             }}
-            handleProps={{
-                style: {
-                    ...globalWindowConfig?.resizeHandleStyle,
-                    ...localWindowConfig?.resizeHandleStyle,
-                },
-                className: [
-                    globalWindowConfig?.resizeHandleClassName,
-                    localWindowConfig?.resizeHandleClassName,
-                ].join(" "),
+            resizeHandleStyle={{
+                ...globalWindowConfig?.resizeHandleStyle,
+                ...localWindowConfig?.resizeHandleStyle,
             }}
+            resizeHandleClassName={[
+                globalWindowConfig?.resizeHandleClassName,
+                localWindowConfig?.resizeHandleClassName,
+            ].join(" ")}
             showLeftHandle
             showTopHandle
-            onWidthChange={(value, edge, startingClientRect) => {
-                if (edge === "left") {
-                    const delta = value - startingClientRect.width;
-                    window.location[0] = startingClientRect.left - delta;
+            onResizeStart={() => {
+                resizingStartLocation.current = [...window.location];
+            }}
+            onSizeChange={(newSize, startingSize, edge) => {
+                if (resizingStartLocation.current == undefined) return;
+                const [startX, startY] = resizingStartLocation.current;
+                const [newWidth, newHeight] = newSize;
+                const [startWidth, startHeight] = startingSize;
+                if (edge[0] === "left") {
+                    const delta = newWidth - startWidth;
+                    window.location[0] = startX - delta;
                     redraw();
                 }
-            }}
-            onHeightChange={(value, edge, startingClientRect) => {
-                if (edge === "top") {
-                    const delta = value - startingClientRect.height;
-                    window.location[1] = startingClientRect.top - delta;
+                if (edge[1] === "top") {
+                    const delta = newHeight - startHeight;
+                    window.location[1] = startY - delta;
                     redraw();
                 }
             }}
@@ -430,7 +436,7 @@ function Window({
                 ].join(" ")}
                 ref={contentRef}
             >
-                {window.config.contents}
+                {window.properties.contents}
             </div>
         </Resizable>
     );
