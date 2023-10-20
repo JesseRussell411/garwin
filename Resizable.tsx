@@ -35,7 +35,7 @@ function v2dAdd(
 }
 
 export interface ResizableProps extends Unpick<ComponentProps<"div">, "ref"> {
-    resizeHandleSize?: number | string;
+    resizeHandleSize?: number;
     resizeHandleStyle?: CSSProperties;
     resizeHandleClassName?: string;
 
@@ -43,9 +43,9 @@ export interface ResizableProps extends Unpick<ComponentProps<"div">, "ref"> {
     height?: number | string;
     setWidth?: (width: number) => void;
     setHeight?: (height: number) => void;
-    // minWidth?: number;
+    minWidth?: number;
+    minHeight?: number;
     // maxWidth?: number;
-    // minHeight?: number;
     // maxHeight?: number;
 
     onSizeChange?: (
@@ -83,8 +83,10 @@ const Resizable = forwardRef<HTMLDivElement, ResizableProps>(
             showRightHandle = true,
             showBottomHandle = true,
             showTopHandle = false,
-            // minHeight = 0,
-            // minWidth = 0,
+            minHeight = (showTopHandle ? resizeHandleSize : 0) +
+                (showBottomHandle ? resizeHandleSize : 0),
+            minWidth = (showLeftHandle ? resizeHandleSize : 0) +
+                (showRightHandle ? resizeHandleSize : 0),
             // maxHeight,
             // maxWidth,
             children,
@@ -111,16 +113,21 @@ const Resizable = forwardRef<HTMLDivElement, ResizableProps>(
             startingSize: [x: number, y: number],
             edge: [x?: "left" | "right", y?: "top" | "bottom"]
         ) {
-            const result = onSizeChange?.(
-                [Math.max(0, newSize[0]), Math.max(0, newSize[1])],
-                startingSize,
-                edge
-            );
+            newSize[0] =
+                edge[0] === undefined
+                    ? startingSize[0]
+                    : Math.max(minWidth, newSize[0]);
+            newSize[1] =
+                edge[1] === undefined
+                    ? startingSize[1]
+                    : Math.max(minHeight, newSize[1]);
+            const result = onSizeChange?.([...newSize], startingSize, edge);
             if (result === "cancel") return;
 
             if (Array.isArray(result)) {
                 newSize = result as [x: number, y: number];
             }
+            
             if (edge[0] !== undefined) setWidth(newSize[0]);
             if (edge[1] !== undefined) setHeight(newSize[1]);
         }
@@ -308,7 +315,7 @@ function Handle({
         <div
             className={handleClassName}
             style={{
-                boxSizing:"border-box",
+                boxSizing: "border-box",
                 position: "absolute",
                 ...(xAxis === "left"
                     ? { left: 0 }
@@ -347,6 +354,7 @@ function Handle({
                             "mousemove",
                             resizeListener
                         );
+                        document.removeEventListener("touchmove", prevDef);
                         document.removeEventListener("selectstart", prevDef);
                         onResizeStop?.();
                     },
@@ -354,6 +362,7 @@ function Handle({
                 );
                 document.addEventListener("mousemove", resizeListener);
                 document.addEventListener("selectstart", prevDef);
+                document.addEventListener("touchmove", prevDef);
             }}
         />
     );

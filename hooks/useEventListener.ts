@@ -1,5 +1,5 @@
+import Itmod from "iterator-modifier";
 import { useEffect, useRef } from "react";
-import { defined, notNull } from "../iterableUtils";
 
 /**
  * Adds an event listener to the given target and automatically removes it.
@@ -47,11 +47,12 @@ export default function useEventListener<
 
             // then add it back on as long as enabled is raised and the target is defined
             if (enabled) {
-                const targets = [
-                    ...notNull(
-                        defined(Array.isArray(target) ? target : [target])
-                    ),
-                ];
+                const targets = Itmod.from(
+                    Array.isArray(target) ? target : [target]
+                )
+                    .notNull()
+                    .defined()
+                    .toArray();
 
                 targets.forEach((target) => {
                     target?.addEventListener(type, listener, ...rest);

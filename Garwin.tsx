@@ -1,25 +1,20 @@
-import React, {
-    ComponentProps,
+import Itmod from "iterator-modifier";
+import {
+    CSSProperties,
     ReactNode,
     forwardRef,
     useImperativeHandle,
-    CSSProperties,
     useRef,
+    ComponentProps,
 } from "react";
-import { Unpick } from "../types/object";
-import Resizable, { ResizableProps } from "./Resizable";
+import Resizable from "./Resizable";
 import useConst from "./hooks/useConst";
 import useEventListener from "./hooks/useEventListener";
 import useForceRedraw from "./hooks/useForceRedraw";
 import useInitRef from "./hooks/useInitRef";
-import { defined, notNull } from "./iterableUtils";
-import Itmod from "iterator-modifier";
+import { Unpick } from "../types/object";
 
-
-const defaults = {
-    headerSize: 40,
-    resizeHandleSize: 10,
-} as const;
+// TODO bound windows on container resize.
 
 function pxIfNum(numOrStr: number | string): string {
     if (typeof numOrStr === "number") {
@@ -29,47 +24,71 @@ function pxIfNum(numOrStr: number | string): string {
     }
 }
 
-export interface WindowConfig {
-    /** Styles applied to the window's outer div. Styles like overflow should be given to {@link contentStyle} */
-    style?: CSSProperties;
-    /** CSS class for the window. */
-    className?: string;
-    /** Styles applies to the div containing the window's contents. Styles for the whole window should be given to {@link style}. */
-    contentStyle?: CSSProperties;
-    /** CSS class for the div containing the window's contents. */
-    contentClassName?: string;
-    // TODO docs
-    /** Elements to be used as drag handles or query strings for querying elements to be used as drag handles. Query strings follow the format accepted by {@link Element.querySelector}. */
-    readonly draggers?: (string | EventTarget)[];
-    /** Whether to show the default dragger. Leave undefined for auto, which shows it if no draggers are provided manually. */
-    readonly showHeader?: boolean;
-    /** Children to give to the header. */
-    readonly headerContents?: ReactNode;
-    /** Styles for the header. */
-    readonly headerStyle?: CSSProperties;
-    /** CSS class for the header. */
-    readonly headerClassName?: string;
-    /**
-     * Height of the header in px.
-     * @default 40
-     */
-    readonly headerSize?: number;
+const defaultWindowConfig = {
+    headerSize: 40,
+    resizeHandleSize: 10,
+    boundPadding: 20,
+    boundToContainer: false,
+    boundToView: true,
+    displayMode: "view",
+} as const satisfies WindowConfig;
 
-    /** Styles for the resize handles. */
-    readonly resizeHandleStyle?: CSSProperties;
-    /** CSS class for the resize handles. */
-    readonly resizeHandleClassName?: string;
-    /**
-     * Size of the resize handles on windows in px.
-     * @default 10
-     */
-    readonly resizeHandleSize?: number;
+export type WindowConfig = Readonly<
+    Partial<{
+        /** Styles applied to the window's outer div. Styles like overflow should be given to {@link contentStyle} */
+        style: CSSProperties;
+        /** CSS class for the window. */
+        className: string;
+        /** Styles applies to the div containing the window's contents. Styles for the whole window should be given to {@link style}. */
+        contentStyle: CSSProperties;
+        /** CSS class for the div containing the window's contents. */
+        contentClassName: string;
+        /** Elements to be used as drag handles or query strings for querying elements to be used as drag handles. Query strings follow the format accepted by {@link Element.querySelector}. */
+        draggers: (string | EventTarget)[];
+        /** Whether to show the default dragger. Leave undefined for auto, which shows it if no draggers are provided manually. */
+        showHeader: boolean;
+        /** Children to give to the header. */
+        headerContents: ReactNode;
+        /** Styles for the header. */
+        headerStyle: CSSProperties;
+        /** CSS class for the header. */
+        headerClassName: string;
+        /**
+         * Height of the header in px.
+         * @default 40
+         */
+        headerSize: number;
 
-    /**
-     * Whether the window can be dragged by parts of the content that are not covered by other elements.
-     */
-    readonly contentDraggable?: boolean;
-}
+        /** Styles for the resize handles. */
+        resizeHandleStyle: CSSProperties;
+        /** CSS class for the resize handles. */
+        resizeHandleClassName: string;
+        /**
+         * Size of the resize handles on windows in px.
+         * @default 10
+         */
+        resizeHandleSize: number;
+
+        /**
+         * Whether the window can be dragged by parts of the content that are not covered by other elements.
+         */
+        contentDraggable: boolean;
+        onMove(
+            startingLocation: [x: number, y: number],
+            newLocation: [x: number, y: number]
+        ): [x: number, y: number] | undefined | void;
+        onMoveStart(startingLocation: [x: number, y: number]): void;
+        onMoveStop(): void;
+
+        boundToContainer: true | false;
+        boundToView: true | false;
+        boundPadding: number;
+
+        baseZIndex: number;
+
+        displayMode: "view" | "container";
+    }>
+>;
 
 export interface WindowProperties {
     /** Unique identifier for the window. Can be a string, number, bigint, symbol, object instance, pretty much anything as long as it's unique and doesn't change. */
@@ -91,6 +110,7 @@ export interface GarwinProps {
      * Window configuration for all windows in the system. Use this to add styling or adjust other settings.
      */
     windowConfig?: WindowConfig;
+    containerProps?: Unpick<ComponentProps<"div">, "ref">;
 }
 
 type Key = any;
@@ -123,15 +143,22 @@ const Garwin = forwardRef<GarwinRef, GarwinProps>(
             windows: windowPropertiesIterable,
             occlusionMode = "zIndex",
             windowConfig,
+            containerProps,
         },
         ref
     ) => {
         const windowProperties = [...windowPropertiesIterable];
+        const combinedWindowConfig = {
+            ...defaultWindowConfig,
+            ...windowConfig,
+        };
 
-        // I am committing the react sin of using mutable state.
+        // I am committing the ultimate sin of using mutable state in React.
         // And there isn't a single thing you can do about it.
-        const redraw = useForceRedraw();
         const windows = useConst(() => new Map<Key, Window>());
+        const redraw = useForceRedraw();
+
+        const containerRef = useInitRef<HTMLDivElement | null>(null);
 
         function windowCleanup() {
             for (const window of windows.values()) {
@@ -213,10 +240,17 @@ const Garwin = forwardRef<GarwinRef, GarwinProps>(
 
         return (
             <div
+                {...containerProps}
                 style={{
-                    position: "relative",
-                    zIndex: 0,
+                    ...(combinedWindowConfig.displayMode === "container"
+                        ? {
+                              overflow: "hidden",
+                              position: "relative",
+                          }
+                        : {}),
+                    ...containerProps?.style,
                 }}
+                ref={containerRef}
             >
                 {(() => {
                     const windowArray = [...windows.values()];
@@ -233,6 +267,7 @@ const Garwin = forwardRef<GarwinRef, GarwinProps>(
                             moveWindowToFront={moveWindowToFront}
                             redraw={redraw}
                             globalWindowConfig={windowConfig}
+                            container={containerRef.current}
                         />
                     );
                 })}
@@ -242,27 +277,29 @@ const Garwin = forwardRef<GarwinRef, GarwinProps>(
 );
 
 function Window({
-    window,
+    window: contentWindow,
     occlusionMode,
     moveWindowToFront,
     redraw,
     globalWindowConfig,
+    container,
 }: {
     window: Window;
     occlusionMode: "renderOrder" | "zIndex";
     moveWindowToFront: (key: Key) => void;
     redraw: () => void;
     globalWindowConfig: WindowConfig | undefined;
+    container: HTMLDivElement | null | undefined;
 }) {
     const headerRef = useInitRef<HTMLDivElement | null>(null);
     const windowRef = useInitRef<HTMLDivElement | null>(null);
     const contentRef = useInitRef<HTMLDivElement | null>(null);
 
     const resizingStartLocation = useRef<readonly [x: number, y: number]>();
-    console.log({ wc: windowRef.current });
 
-    const localWindowConfig = window.properties.config;
+    const localWindowConfig = contentWindow.properties.config;
     const combinedWindowConfig = {
+        ...defaultWindowConfig,
         ...globalWindowConfig,
         ...localWindowConfig,
     };
@@ -273,10 +310,14 @@ function Window({
     ];
 
     const {
-        resizeHandleSize = defaults.resizeHandleSize,
-        headerSize = defaults.headerSize,
+        resizeHandleSize,
+        headerSize = defaultWindowConfig.headerSize,
         contentDraggable = true,
         showHeader = draggers.length === 0,
+        boundPadding,
+        boundToContainer,
+        boundToView,
+        displayMode,
     } = combinedWindowConfig;
 
     const dragTargets: EventTarget[] = Itmod.of(
@@ -304,19 +345,83 @@ function Window({
         if (!(e instanceof MouseEvent)) return;
         if (e.target !== e.currentTarget) return;
 
-        const startingLocation = [...window.location];
-        const startingMouseLocation = [e.clientX, e.clientY];
+        // e.preventDefault();
+        // e.stopPropagation();
+
+        const startingLocation: [x: number, y: number] = [
+            ...contentWindow.location,
+        ];
+        const startingMouseLocation: [x: number, y: number] = [
+            e.clientX,
+            e.clientY,
+        ];
+
+        globalWindowConfig?.onMoveStart?.([...startingLocation]);
+        localWindowConfig?.onMoveStart?.([...startingLocation]);
 
         function dragListener(e: MouseEvent) {
+            e.stopPropagation();
+            e.preventDefault();
             const currentMouseLocation = [e.clientX, e.clientY];
+
+            if (boundToContainer === true) {
+                if (container == null) return;
+
+                const rect = container.getBoundingClientRect();
+
+                currentMouseLocation[0] = Math.max(
+                    rect.left + boundPadding,
+                    Math.min(rect.right - boundPadding, currentMouseLocation[0])
+                );
+
+                currentMouseLocation[1] = Math.max(
+                    rect.top + boundPadding,
+                    Math.min(
+                        rect.bottom - boundPadding,
+                        currentMouseLocation[1]
+                    )
+                );
+            }
+
+            if (boundToView === true) {
+                const viewHeight = document.documentElement.clientHeight;
+                const viewWidth = document.documentElement.clientWidth;
+
+                currentMouseLocation[0] = Math.max(
+                    boundPadding,
+                    Math.min(viewWidth - boundPadding, currentMouseLocation[0])
+                );
+
+                currentMouseLocation[1] = Math.max(
+                    boundPadding,
+                    Math.min(viewHeight - boundPadding, currentMouseLocation[1])
+                );
+            }
 
             const locationOffset = [
                 currentMouseLocation[0] - startingMouseLocation[0],
                 currentMouseLocation[1] - startingMouseLocation[1],
             ];
 
-            window.location[0] = startingLocation[0] + locationOffset[0];
-            window.location[1] = startingLocation[1] + locationOffset[1];
+            let newLocation: [x: number, y: number] = [
+                startingLocation[0] + locationOffset[0],
+                startingLocation[1] + locationOffset[1],
+            ];
+
+            newLocation =
+                globalWindowConfig?.onMove?.(
+                    [...startingLocation],
+                    [...newLocation]
+                ) ?? newLocation;
+
+            newLocation =
+                localWindowConfig?.onMove?.(
+                    [...startingLocation],
+                    [...newLocation]
+                ) ?? newLocation;
+
+            contentWindow.location[0] = newLocation[0];
+            contentWindow.location[1] = newLocation[1];
 
             redraw();
         }
@@ -329,20 +434,26 @@ function Window({
                 // remove listeners
                 document.removeEventListener("mousemove", dragListener);
                 document.removeEventListener("selectstart", prevDef);
+                window.removeEventListener("DOMMouseScroll", prevDef);
+                globalWindowConfig?.onMoveStop?.();
+                localWindowConfig?.onMoveStop?.();
             },
             { once: true }
         );
-        document.addEventListener("selectstart", prevDef);
         document.addEventListener("mousemove", dragListener);
+        document.addEventListener("selectstart", prevDef);
+        // window.addEventListener("DOMMouseScroll", prevDef);
     });
 
     return (
         <Resizable
             style={{
-                position: "absolute",
-                left: window.location[0],
-                top: window.location[1],
-                zIndex: occlusionMode === "zIndex" ? window.zIndex : undefined,
+                position: displayMode === "view" ? "fixed" : "absolute",
+                left: contentWindow.location[0],
+                top: contentWindow.location[1],
+                zIndex:
+                    contentWindow.zIndex +
+                    (combinedWindowConfig.baseZIndex ?? 0),
                 overflow: "hidden",
                 ...(showHeader
                     ? {
@@ -356,14 +467,9 @@ function Window({
             }}
             resizeHandleSize={resizeHandleSize}
             ref={windowRef}
-            key={window.key}
-            // minHeight={
-            //     resizeHandleSize +
-            //     resizeHandleSize +
-            //     (showHeader ? headerSize : 0)
-            // }
+            key={contentWindow.key}
             onMouseDown={() => {
-                moveWindowToFront(window.key);
+                moveWindowToFront(contentWindow.key);
             }}
             resizeHandleStyle={{
                 ...globalWindowConfig?.resizeHandleStyle,
@@ -376,7 +482,7 @@ function Window({
             showLeftHandle
             showTopHandle
             onResizeStart={() => {
-                resizingStartLocation.current = [...window.location];
+                resizingStartLocation.current = [...contentWindow.location];
             }}
             onSizeChange={(newSize, startingSize, edge) => {
                 if (resizingStartLocation.current == undefined) return;
@@ -385,12 +491,12 @@ function Window({
                 const [startWidth, startHeight] = startingSize;
                 if (edge[0] === "left") {
                     const delta = newWidth - startWidth;
-                    window.location[0] = startX - delta;
+                    contentWindow.location[0] = startX - delta;
                     redraw();
                 }
                 if (edge[1] === "top") {
                     const delta = newHeight - startHeight;
-                    window.location[1] = startY - delta;
+                    contentWindow.location[1] = startY - delta;
                     redraw();
                 }
             }}
@@ -436,7 +542,7 @@ function Window({
                 ].join(" ")}
                 ref={contentRef}
             >
-                {window.properties.contents}
+                {contentWindow.properties.contents}
             </div>
         </Resizable>
     );
